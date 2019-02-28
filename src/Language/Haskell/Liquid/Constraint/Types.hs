@@ -13,6 +13,9 @@ module Language.Haskell.Liquid.Constraint.Types
     -- * Constraint Generation Environment
   , CGEnv (..)
 
+  , LHSymbol(..)
+  , isDummySymbol
+
     -- * Logical constraints (FIXME: related to bounds?)
   , LConstraint (..)
 
@@ -83,6 +86,12 @@ import qualified Language.Haskell.Liquid.UX.CTags      as Tg
 
 type CG = State CGInfo
 
+data LHSymbol = 
+    LHGHCVar Var
+
+isDummySymbol :: LHSymbol -> Bool
+isDummySymbol _ = undefined -- TODO: Implement me!!!
+
 data CGEnv = CGE
   { cgLoc    :: !SpanStack         -- ^ Location in original source file
   , renv     :: !REnv              -- ^ SpecTypes for Bindings in scope
@@ -102,11 +111,11 @@ data CGEnv = CGE
   , emb    :: F.TCEmb TC.TyCon   -- ^ How to embed GHC Tycons into fixpoint sorts
   , tgEnv  :: !Tg.TagEnv          -- ^ Map from top-level binders to fixpoint tag
   , tgKey  :: !(Maybe Tg.TagKey)                     -- ^ Current top-level binder
-  , trec   :: !(Maybe (M.HashMap F.Symbol SpecType)) -- ^ Type of recursive function with decreasing constraints
-  , lcb    :: !(M.HashMap F.Symbol CoreExpr)         -- ^ Let binding that have not been checked (c.f. LAZYVARs)
+  , trec   :: !(Maybe (M.HashMap LHSymbol SpecType)) -- ^ Type of recursive function with decreasing constraints
+  , lcb    :: !(M.HashMap LHSymbol CoreExpr)         -- ^ Let binding that have not been checked (c.f. LAZYVARs)
   , holes  :: !HEnv                                  -- ^ Types with holes, will need refreshing
   , lcs    :: !LConstraint                           -- ^ Logical Constraints
-  , aenv   :: !(M.HashMap Var F.Symbol)              -- ^ axiom environment maps reflected Haskell functions to the logical functions
+  -- , aenv   :: !(M.HashMap Var F.Symbol)              -- ^ axiom environment maps reflected Haskell functions to the logical functions
   , cerr   :: !(Maybe (TError SpecType))             -- ^ error that should be reported at the user
   -- , cgCfg  :: !Config                                -- ^ top-level config options
   , cgInfo :: !GhcInfo                               -- ^ top-level GhcInfo
@@ -426,7 +435,7 @@ instance NFData RInv where
   rnf (RInv x y z) = rnf x `seq` rnf y `seq` rnf z
 
 instance NFData CGEnv where
-  rnf (CGE x1 _ x3 _ x4 x5 x55 x6 x7 x8 x9 _ _ _ x10 _ _ _ _ _ _ _ _ _ _ _)
+  rnf (CGE x1 _ x3 _ x4 x5 x55 x6 x7 x8 x9 _ _ _ x10 _ _ _ _ _ _ _ _ _ _)
     = x1 `seq` {- rnf x2 `seq` -} seq x3
          `seq` rnf x5
          `seq` rnf x55

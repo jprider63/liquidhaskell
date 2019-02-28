@@ -105,7 +105,7 @@ fromListREnv gXts lXts = REnv
   }
 
 -- RJ: REnv-Split-Bug?
-deleteREnv :: F.Symbol -> REnv -> REnv
+deleteREnv :: LHSymbol -> REnv -> REnv
 deleteREnv x rE = rE `updREnvLocal` (M.delete x)
 
 insertREnv :: F.Symbol -> SpecType -> REnv -> REnv
@@ -154,18 +154,18 @@ extendEnvWithVV γ t
 addBinders :: CGEnv -> F.Symbol -> [(F.Symbol, SpecType)] -> CG CGEnv
 addBinders γ0 x' cbs   = foldM (++=) (γ0 -= x') [("addBinders", x, t) | (x, t) <- cbs]
 
-addBind :: SrcSpan -> F.Symbol -> F.SortedReft -> CG ((F.Symbol, F.Sort), F.BindId)
+addBind :: SrcSpan -> LHSymbol -> F.SortedReft -> CG ((LHSymbol, F.Sort), F.BindId)
 addBind l x r = do
   st          <- get
   let (i, bs') = F.insertBindEnv x r (binds st)
   put          $ st { binds = bs' } { bindSpans = M.insert i l (bindSpans st) }
   return ((x, F.sr_sort r), {- traceShow ("addBind: " ++ showpp x) -} i)
 
-addClassBind :: CGEnv -> SrcSpan -> SpecType -> CG [((F.Symbol, F.Sort), F.BindId)]
+addClassBind :: CGEnv -> SrcSpan -> SpecType -> CG [((LHSymbol, F.Sort), F.BindId)]
 addClassBind γ l = mapM (uncurry (addBind l)) . classBinds (emb γ)
 
 {- see tests/pos/polyfun for why you need everything in fixenv -}
-addCGEnv :: (SpecType -> SpecType) -> CGEnv -> (String, F.Symbol, SpecType) -> CG CGEnv
+addCGEnv :: (SpecType -> SpecType) -> CGEnv -> (String, LHSymbol, SpecType) -> CG CGEnv
 addCGEnv tx γ (eMsg, x, REx y tyy tyx) = do
   y' <- fresh
   γ' <- addCGEnv tx γ (eMsg, y', tyy)
@@ -207,10 +207,10 @@ normalizeVV _ t
   = t
 
 --------------------------------------------------------------------------------
-(+=) :: CGEnv -> (String, F.Symbol, SpecType) -> CG CGEnv
+(+=) :: CGEnv -> (String, LHSymbol, SpecType) -> CG CGEnv
 --------------------------------------------------------------------------------
 γ += (eMsg, x, r)
-  | x == F.dummySymbol
+  | isDummySymbol x
   = return γ
   -- // | x `memberREnv` (renv γ)
   -- // = _dupBindErr x γ
@@ -230,17 +230,17 @@ globalize :: CGEnv -> CGEnv
 globalize γ = γ {renv = globalREnv (renv γ)}
 
 --------------------------------------------------------------------------------
-(++=) :: CGEnv -> (String, F.Symbol, SpecType) -> CG CGEnv
+(++=) :: CGEnv -> (String, LHSymbol, SpecType) -> CG CGEnv
 --------------------------------------------------------------------------------
 (++=) γ (eMsg, x, t)
   = addCGEnv (addRTyConInv (M.unionWith mappend (invs γ) (ial γ))) γ (eMsg, x, t)
 
 --------------------------------------------------------------------------------
-addSEnv :: CGEnv -> (String, F.Symbol, SpecType) -> CG CGEnv
+addSEnv :: CGEnv -> (String, LHSymbol, SpecType) -> CG CGEnv
 --------------------------------------------------------------------------------
 addSEnv γ = addCGEnv (addRTyConInv (invs γ)) γ
 
-addEEnv :: CGEnv -> (F.Symbol, SpecType) -> CG CGEnv
+addEEnv :: CGEnv -> (LHSymbol, SpecType) -> CG CGEnv
 addEEnv γ (x,t')= do
   idx   <- fresh
   -- allowHOBinders <- allowHO <$> get
@@ -253,10 +253,10 @@ addEEnv γ (x,t')= do
   return $ γ' { fenv = insertsFEnv (fenv γ) is }
 
 
-(+++=) :: (CGEnv, String) -> (F.Symbol, CoreExpr, SpecType) -> CG CGEnv
+(+++=) :: (CGEnv, String) -> (LHSymbol, CoreExpr, SpecType) -> CG CGEnv
 (γ, _) +++= (x, e, t) = (γ {lcb = M.insert x e (lcb γ) }) += ("+++=", x, t)
 
-(-=) :: CGEnv -> F.Symbol -> CGEnv
+(-=) :: CGEnv -> LHSymbol -> CGEnv
 γ -= x =  γ { renv = deleteREnv x (renv γ)
             , lcb  = M.delete   x (lcb  γ)
             -- , fenv = removeFEnv x (fenv γ)
@@ -292,7 +292,7 @@ setTRec γ xts  = γ' {trec = Just $ M.fromList xts' `M.union` trec'}
   where
     γ'         = γ `setRecs` (fst <$> xts)
     trec'      = fromMaybe M.empty $ trec γ
-    xts'       = first F.symbol <$> xts
+    xts'       = first LHGHCVar <$> xts
 
 ------------------------------------------------------------------------
 getLocation :: CGEnv -> SrcSpan
