@@ -406,10 +406,15 @@ makeRecInvariants γ _ = γ
 -- | Fixpoint Environment ------------------------------------------------------
 --------------------------------------------------------------------------------
 
-data FEnv = FE
-  { feBinds :: !F.IBindEnv        -- ^ Integer Keys for Fixpoint Environment
-  , feEnv   :: !(F.SEnv F.Sort)   -- ^ Fixpoint Environment
-  , feIdEnv :: !(F.SEnv F.BindId) -- ^ Map from Symbol to current BindId
+-- data FEnv = FE
+--   { feBinds :: !F.IBindEnv        -- ^ Integer Keys for Fixpoint Environment
+--   , feEnv   :: !(F.SEnv F.Sort)   -- ^ Fixpoint Environment
+--   , feIdEnv :: !(F.SEnv F.BindId) -- ^ Map from Symbol to current BindId
+--   }
+
+-- LHSymbol -> (F.BindId, F.Sort)
+newtype FEnv = FE {
+  { feEnv :: !(F.SEnv LHSymbol (F.BindId, F.Sort)) -- ^ Map from symbol to BindId and Sort
   }
 
 insertFEnv :: FEnv -> ((F.Symbol, F.Sort), F.BindId) -> FEnv
