@@ -141,6 +141,11 @@ config = cmdArgsMode $ Config {
  , saveQuery
     = def &= help "Save fixpoint query to file (slow)"
 
+ , synthHoles
+    = def &= help "Synthesize suggestions for holes"
+          &= name "holes"
+          &= explicit
+
  , checks
     = def &= help "Check a specific (top-level) binder"
           &= name "check-var"
@@ -532,6 +537,7 @@ defConfig = Config
   , higherorderqs     = def
   , diffcheck         = def
   , saveQuery         = def
+  , synthHoles        = def
   , checks            = def
   , nostructuralterm  = def 
   , noCheckUnknown    = def

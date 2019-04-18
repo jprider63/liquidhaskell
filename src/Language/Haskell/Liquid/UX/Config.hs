@@ -13,6 +13,7 @@ module Language.Haskell.Liquid.UX.Config (
    , maxCaseExpand 
    , exactDCFlag
    , hasOpt
+   , synthesizeHolesFlag
    , totalityCheck
    , terminationCheck 
    , structuralTerm
@@ -41,6 +42,7 @@ data Config = Config
   , normalForm     :: Bool       -- ^ allow lambda normalization-equivalence axioms
   , fullcheck      :: Bool       -- ^ check all binders (overrides diffcheck)
   , saveQuery      :: Bool       -- ^ save fixpoint query
+  , synthHoles     :: Bool       -- ^ synthesize holes
   , checks         :: [String]   -- ^ set of binders to check
   , noCheckUnknown :: Bool       -- ^ whether to complain about specifications for unexported and unused values
   , notermination  :: Bool       -- ^ disable termination check
@@ -133,6 +135,9 @@ class HasConfig t where
 
 patternFlag :: (HasConfig t) => t -> Bool
 patternFlag = not . noPatternInline . getConfig
+
+synthesizeHolesFlag :: (HasConfig t) => t -> Bool
+synthesizeHolesFlag = synthHoles . getConfig
 
 higherOrderFlag :: (HasConfig t) => t -> Bool
 higherOrderFlag x = higherorder cfg || reflection cfg 

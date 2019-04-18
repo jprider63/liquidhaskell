@@ -31,6 +31,7 @@ import           Language.Fixpoint.Misc hiding (errorstar)
 import           Language.Haskell.Liquid.GHC.Misc -- (concatMapM)
 import           Language.Haskell.Liquid.GHC.SpanStack (srcSpan)
 import qualified Language.Haskell.Liquid.GHC.API            as Ghc
+import           Language.Haskell.Liquid.UX.Config
 
 --------------------------------------------------------------------------------
 -- RJ: What is this `isBind` business?
@@ -120,14 +121,16 @@ addLocA !xo !l !t
 -- | Used for annotating holes 
 
 addHole :: Var -> SpecType -> CGEnv -> CG () 
-addHole x t γ = do 
-  modify $ \s -> s {holesMap = M.insertWith (<>) x hinfo $ holesMap s}
-  addWarning $ ErrHole loc ("hole found") (reGlobal env <> reLocal env) x' t 
-    where 
-      hinfo = [HoleInfo t loc env]
-      loc   = srcSpan $ cgLoc γ
-      env   = mconcat [renv γ, grtys γ, assms γ, intys γ]
-      x'    = text $ showSDoc $ Ghc.pprNameUnqualified $ Ghc.getName x
+addHole x t γ = 
+  if synthesizeHolesFlag γ then
+    modify $ \s -> s {holesMap = M.insertWith (<>) x hinfo $ holesMap s}
+  else
+    addWarning $ ErrHole loc ("hole found") (reGlobal env <> reLocal env) x' t 
+        where 
+          hinfo = [HoleInfo t loc env]
+          loc   = srcSpan $ cgLoc γ
+          env   = mconcat [renv γ, grtys γ, assms γ, intys γ]
+          x'    = text $ showSDoc $ Ghc.pprNameUnqualified $ Ghc.getName x
 
 --------------------------------------------------------------------------------
 -- | Update annotations for a location, due to (ghost) predicate applications
