@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Language.Haskell.Liquid.Synthesize (
     synthesize
@@ -29,6 +30,7 @@ import qualified Language.Fixpoint.Types.Config as F
 import CoreUtils (exprType)
 import CoreSyn (CoreExpr)
 import qualified CoreSyn as GHC
+import qualified Literal as GHC
 import Var 
 import TyCon
 import DataCon
@@ -168,9 +170,17 @@ synthesizeLiteral cgi t = do
             smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
 
         liftIO (SMT.smtPop ctx)
-        return [GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
+        -- return [GHC.App (GHC.Var iId) $ GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
+        -- return [GHC.App (GHC.Var (toLitConstructor c)) $ GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
+        return [GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
     go _ = 
         return []
+
+    -- TODO XXX
+    toLitConstructor _ = dataConWorkId intDataCon
+    toLitNumType _ = GHC.LitNumInt 
+
+    toHType = mkTyConTy . rtc_tc
 
 
 -- Panagiotis TODO: here I only explore the first one                     
