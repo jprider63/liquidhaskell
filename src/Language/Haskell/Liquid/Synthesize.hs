@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
@@ -96,22 +97,22 @@ synthesize' tgt ctx fcfg cgi cge renv senv x tx xtop ttop st2
     -- Type Abstraction 
     go (RAllT a t)       = GHC.Lam (tyVarVar a) <$$> go t
           
-    -- Special Treatment for synthesis of integers          
-    go t@(RApp c _ts _ r)  
-      | R.isNumeric (tyConEmbed cgi) c = 
-          do  let RR s (Reft(x,rr)) = rTypeSortedReft (tyConEmbed cgi) t 
-              ctx <- sContext <$> get 
-              liftIO $ SMT.smtPush ctx
-              liftIO $ SMT.smtDecl ctx x s
-              liftIO $ SMT.smtCheckSat ctx rr 
-              -- Get model and parse the value of x
-              SMT.Model modelBinds <- liftIO $ SMT.smtGetModel ctx
-              
-              let xNotFound = error $ "Symbol " ++ show x ++ "not found."
-                  smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
+    -- -- Special Treatment for synthesis of integers          
+    -- go t@(RApp c _ts _ r)  
+    --   | R.isNumeric (tyConEmbed cgi) c = 
+    --       do  let RR s (Reft(x,rr)) = rTypeSortedReft (tyConEmbed cgi) t 
+    --           ctx <- sContext <$> get 
+    --           liftIO $ SMT.smtPush ctx
+    --           liftIO $ SMT.smtDecl ctx x s
+    --           liftIO $ SMT.smtCheckSat ctx rr 
+    --           -- Get model and parse the value of x
+    --           SMT.Model modelBinds <- liftIO $ SMT.smtGetModel ctx
+    --           
+    --           let xNotFound = error $ "Symbol " ++ show x ++ "not found."
+    --               smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
 
-              liftIO (SMT.smtPop ctx)
-              return [GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
+    --           liftIO (SMT.smtPop ctx)
+    --           return [GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
 
 
     go t = do ys <- mapM freshVar txs
@@ -120,13 +121,12 @@ synthesize' tgt ctx fcfg cgi cge renv senv x tx xtop ttop st2
               mapM_ (uncurry addEmem) (zip ys ((subst su)<$> txs)) 
               addEnv x $ decrType x tx ys (zip xs txs)
               addEmem x $ decrType x tx ys (zip xs txs)
-              GHC.mkLams ys <$$> synthesizeBasic (subst su to) 
+              GHC.mkLams ys <$$> synthesizeLiteral cgi (subst su to) 
       where (_, (xs, txs, _), to) = bkArrow t 
 
-    
 
-synthesizeBasic :: SpecType -> SM [CoreExpr]
-synthesizeBasic t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -} do
+synthesizeBasic :: CGInfo -> SpecType -> SM [CoreExpr]
+synthesizeBasic cgi t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -} do
   let ht     = toType t
       tyvars = varsInType ht
   case tyvars of
@@ -135,24 +135,55 @@ synthesizeBasic t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -} do
     _   -> error $ "TyVars in type [" ++ show t ++ "] are more than one ( " ++ show tyvars ++ " )."
   es <- genTerms t
   filterElseM (hasType t) es $ trace (" ty-vars " ++ show tyvars) $ do
+    synthesizeLiteral cgi t
+    
+-- TODO: 
+-- hasType is failing
+-- Get Haskell AST for function containing hole
+synthesizeLiteral :: CGInfo -> SpecType -> SM [CoreExpr]
+synthesizeLiteral cgi t = do
+  es <- go t
+
+  -- lift $ putStrLn "synthesizeLiteral!!!!!!!!!"
+  -- lift $ print t
+
+  filterElseM (hasType t) es $ do
     senv <- getSEnv
     lenv <- getLocalEnv 
-    es' <- synthesizeMatch lenv senv t
+    es' <- synthesizeMatch cgi lenv senv t
     cgenv <- sCGEnv <$> get
     filterM (hasType t) es'
+
+  where
+    go t@(RApp c _ts _ r) | R.isNumeric (tyConEmbed cgi) c = do
+        let RR s (Reft(x,rr)) = rTypeSortedReft (tyConEmbed cgi) t 
+        ctx <- sContext <$> get 
+        liftIO $ SMT.smtPush ctx
+        liftIO $ SMT.smtDecl ctx x s
+        liftIO $ SMT.smtCheckSat ctx rr 
+        -- Get model and parse the value of x
+        SMT.Model modelBinds <- liftIO $ SMT.smtGetModel ctx
+        
+        let xNotFound = error $ "Symbol " ++ show x ++ "not found."
+            smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
+
+        liftIO (SMT.smtPop ctx)
+        return [GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
+    go _ = 
+        return []
 
 
 -- Panagiotis TODO: here I only explore the first one                     
 --  We need the most recent one
-synthesizeMatch :: LEnv -> SSEnv -> SpecType -> SM [CoreExpr]
-synthesizeMatch lenv γ t 
+synthesizeMatch :: CGInfo -> LEnv -> SSEnv -> SpecType -> SM [CoreExpr]
+synthesizeMatch cgi lenv γ t 
   -- | [] <- es 
   -- = return def
 
   -- | otherwise 
   -- = maybe def id <$> monadicFirst 
   = trace ("[synthesizeMatch] es = " ++ show es) $ 
-      join <$> mapM (withIncrDepth . matchOn t) (es <> ls)
+      join <$> mapM (withIncrDepth . matchOn cgi t) (es <> ls)
 
   where 
     es = [(v,t,rtc_tc c) | (x, (t@(RApp c _ _ _), v)) <- M.toList γ] 
@@ -175,25 +206,25 @@ synthesizeMatch lenv γ t
         --         Nothing -> monadicFirst f ms
 
 
-matchOn :: SpecType -> (Var, SpecType, TyCon) -> SM [CoreExpr]
-matchOn t (v, tx, c) = (GHC.Case (GHC.Var v) v (toType tx) <$$> sequence) <$> mapM (makeAlt scrut t (v, tx)) (tyConDataCons c)
+matchOn :: CGInfo -> SpecType -> (Var, SpecType, TyCon) -> SM [CoreExpr]
+matchOn cgi t (v, tx, c) = (GHC.Case (GHC.Var v) v (toType tx) <$$> sequence) <$> mapM (makeAlt cgi scrut t (v, tx)) (tyConDataCons c)
   where scrut = v
   -- JP: Does this need to be a foldM? Previous pattern matches could influence expressions of later patterns?
 
 
 
-makeAlt :: Var -> SpecType -> (Var, SpecType) -> DataCon -> SM [GHC.CoreAlt]
-makeAlt var t (x, tx@(RApp _ ts _ _)) c = locally $ do -- (AltCon, [b], Expr b)
+makeAlt :: CGInfo -> Var -> SpecType -> (Var, SpecType) -> DataCon -> SM [GHC.CoreAlt]
+makeAlt cgi var t (x, tx@(RApp _ ts _ _)) c = locally $ do -- (AltCon, [b], Expr b)
   ts <- liftCG $ mapM trueTy τs
   xs <- mapM freshVar ts    
   addsEnv $ zip xs ts 
   addsEmem $ zip xs ts 
   liftCG0 (\γ -> caseEnv γ x mempty (GHC.DataAlt c) xs Nothing)
-  es <- synthesizeBasic t
+  es <- synthesizeBasic cgi t
   return $ (\e -> (GHC.DataAlt c, xs, e)) <$> es
   where 
     (_, _, τs) = dataConInstSig c (toType <$> ts)
-makeAlt _ _ _ _ = error "makeAlt.bad argument"
+makeAlt _ _ _ _ _ = error "makeAlt.bad argument"
     
 
 
