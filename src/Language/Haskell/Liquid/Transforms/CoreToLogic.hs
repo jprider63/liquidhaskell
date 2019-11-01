@@ -16,6 +16,7 @@ module Language.Haskell.Liquid.Transforms.CoreToLogic
   , measureSpecType
   , weakenResult
   , normalize
+  , makesub
   ) where
 
 import           Data.ByteString                       (ByteString)

@@ -21,6 +21,7 @@ import           Language.Haskell.Liquid.Synthesize.GHC
 import           Language.Haskell.Liquid.Synthesize.Check
 import           Language.Haskell.Liquid.Synthesize.Monad
 import           Language.Haskell.Liquid.Synthesize.Misc
+import           Language.Haskell.Liquid.Transforms.CoreToLogic (coreToLogic, runToLogic, makesub)
 import           Language.Haskell.Liquid.Constraint.Fresh (trueTy)
 import qualified Language.Fixpoint.Smt.Interface as SMT
 import           Language.Fixpoint.Types hiding (SEnv, SVar, Error)
@@ -29,8 +30,12 @@ import qualified Language.Fixpoint.Types.Config as F
 
 import CoreUtils (exprType)
 import CoreSyn (CoreExpr)
-import qualified CoreSyn as GHC
-import qualified Literal as GHC
+import qualified CoreSyn  as GHC
+import qualified DynFlags as GHC
+import qualified Literal  as GHC
+import qualified MkCore   as GHC
+import qualified Outputable as GHC
+import qualified PprCore  as GHC
 import Var 
 import TyCon
 import DataCon
@@ -42,6 +47,7 @@ import           Control.Monad.State.Lazy
 import qualified Data.HashMap.Strict as M 
 import           Data.Default 
 import           Data.Graph (SCC(..))
+import qualified Data.List as List
 import qualified Data.Text as T
 import           Data.Maybe
 import           Debug.Trace 
@@ -118,17 +124,25 @@ synthesize' tgt ctx fcfg cgi cge renv senv x tx xtop ttop st2
 
 
     go t = do ys <- mapM freshVar txs
+              liftIO $ putStrLn "TTOP*****:"
+              liftIO $ print $ pprint ttop
+              liftIO $ putStrLn "T*****:"
+              liftIO $ print $ pprint t
+              liftIO $ putStrLn "X*****:"
+              liftIO $ print $ pprint x
+              liftIO $ putStrLn "XTOP*****:"
+              liftIO $ print $ pprint xtop
               let su = F.mkSubst $ zip xs ((EVar . symbol) <$> ys) 
               mapM_ (uncurry addEnv) (zip ys ((subst su)<$> txs)) 
               mapM_ (uncurry addEmem) (zip ys ((subst su)<$> txs)) 
               addEnv x $ decrType x tx ys (zip xs txs)
               addEmem x $ decrType x tx ys (zip xs txs)
-              GHC.mkLams ys <$$> synthesizeLiteral cgi (subst su to) 
+              GHC.mkLams ys <$$> synthesizeLiteral cgi xtop (subst su to) 
       where (_, (xs, txs, _), to) = bkArrow t 
 
 
-synthesizeBasic :: CGInfo -> SpecType -> SM [CoreExpr]
-synthesizeBasic cgi t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -} do
+synthesizeBasic :: CGInfo -> Var -> SpecType -> SM [CoreExpr]
+synthesizeBasic cgi xtop t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -} do
   let ht     = toType t
       tyvars = varsInType ht
   case tyvars of
@@ -137,42 +151,89 @@ synthesizeBasic cgi t = {- trace ("[ synthesizeBasic ] goalType " ++ show t) $ -
     _   -> error $ "TyVars in type [" ++ show t ++ "] are more than one ( " ++ show tyvars ++ " )."
   es <- genTerms t
   filterElseM (hasType t) es $ trace (" ty-vars " ++ show tyvars) $ do
-    synthesizeLiteral cgi t
+    synthesizeLiteral cgi xtop t
     
 -- TODO: 
 -- hasType is failing
 -- Get Haskell AST for function containing hole
-synthesizeLiteral :: CGInfo -> SpecType -> SM [CoreExpr]
-synthesizeLiteral cgi t = do
+synthesizeLiteral :: CGInfo -> Var -> SpecType -> SM [CoreExpr]
+synthesizeLiteral cgi tx t = do
+
+  liftIO  $ putStrLn $ GHC.showSDocUnsafe $ GHC.pprCoreBinding cb
   es <- go t
+
+  -- let es = []
 
   -- lift $ putStrLn "synthesizeLiteral!!!!!!!!!"
   -- lift $ print t
 
   filterElseM (hasType t) es $ do
-    senv <- getSEnv
-    lenv <- getLocalEnv 
-    es' <- synthesizeMatch cgi lenv senv t
-    cgenv <- sCGEnv <$> get
-    filterM (hasType t) es'
+    -- senv <- getSEnv
+    -- lenv <- getLocalEnv 
+    -- es' <- synthesizeMatch cgi lenv senv t
+    -- cgenv <- sCGEnv <$> get
+    -- filterM (hasType t) es'
+    return []
 
   where
-    go t@(RApp c _ts _ r) | R.isNumeric (tyConEmbed cgi) c = do
-        let RR s (Reft(x,rr)) = rTypeSortedReft (tyConEmbed cgi) t 
+
+    cbs = giCbs $ giSrc $ ghcI cgi
+    cb = case List.find (containsTopLevelVar tx) cbs of
+        Nothing -> 
+            -- This should be impossible?
+            error "synthesizeLiteral: unreachable"
+        Just bc -> 
+            bc
+
+    -- TCEmb TyCon -> LogicMap -> DataConMap -> (String -> Error) -> LogicM t -> Either Error t
+    le = case runToLogic tce lm dcm error $ makesub cb of
+        Left err -> error $ show err -- TODO
+        Right (_s, le) -> le
+
+    containsTopLevelVar tx (GHC.NonRec tx' _) = tx == tx'
+    containsTopLevelVar tx (GHC.Rec txs) = List.or $ fmap (\(tx',_) -> tx == tx') txs
+
+    dcm = mempty -- tcDataConMap JP: Do we need this? How do we get a TycEnv?
+    lm = gsLogicMap $ gsRefl $ giSpec $ ghcI cgi
+    tce = tyConEmbed cgi -- TycEnv has tce too..
+
+    go t@(RApp c _ts _ r) | R.isNumeric tce c = do
+        let RR s (Reft(x,rr)) = rTypeSortedReft tce t 
         ctx <- sContext <$> get 
         liftIO $ SMT.smtPush ctx
         liftIO $ SMT.smtDecl ctx x s
-        liftIO $ SMT.smtCheckSat ctx rr 
-        -- Get model and parse the value of x
-        SMT.Model modelBinds <- liftIO $ SMT.smtGetModel ctx
-        
-        let xNotFound = error $ "Symbol " ++ show x ++ "not found."
-            smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
+        -- sat <- liftIO $ SMT.smtCheckSat ctx rr 
+        sat <- liftIO $ SMT.smtCheckSat ctx le
+        liftIO $ putStrLn "T'*****:"
+        liftIO $ print $ pprint t
+        liftIO $ putStrLn "RR*****:"
+        liftIO $ print $ pprint rr
+
+        -- Check if SAT.
+        res <- if sat then do
+                -- Get model and parse the value of x
+                model <- liftIO $ SMT.smtGetModel ctx
+                case model of
+                    SMT.Sat -> error "synthesizeLiteral: unreachable"
+                    SMT.Unsat -> error "synthesizeLiteral: unreachable"
+                    SMT.Unknown -> error "synthesizeLiteral: unreachable"
+                    SMT.Values _ -> error "synthesizeLiteral: unreachable"
+                    SMT.Model modelBinds -> do
+                
+                        let xNotFound = error $ "Symbol " ++ show x ++ "not found."
+                            smtVal = T.unpack $ fromMaybe xNotFound $ lookup x modelBinds
+                        -- return [GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
+                        return [GHC.mkIntExpr GHC.unsafeGlobalDynFlags (read smtVal :: Integer)]
+                        -- return []
+            else do
+                liftIO $ putStrLn "Not SAT"
+                return []
 
         liftIO (SMT.smtPop ctx)
         -- return [GHC.App (GHC.Var iId) $ GHC.Lit (mkMachInt64 (read smtVal :: Integer))]
         -- return [GHC.App (GHC.Var (toLitConstructor c)) $ GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
-        return [GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
+        -- return [GHC.Lit (LitNumber (toLitNumType c) (read smtVal :: Integer) (toHType c))]
+        return res
     go _ = 
         return []
 
@@ -183,58 +244,58 @@ synthesizeLiteral cgi t = do
     toHType = mkTyConTy . rtc_tc
 
 
--- Panagiotis TODO: here I only explore the first one                     
---  We need the most recent one
-synthesizeMatch :: CGInfo -> LEnv -> SSEnv -> SpecType -> SM [CoreExpr]
-synthesizeMatch cgi lenv γ t 
-  -- | [] <- es 
-  -- = return def
-
-  -- | otherwise 
-  -- = maybe def id <$> monadicFirst 
-  = trace ("[synthesizeMatch] es = " ++ show es) $ 
-      join <$> mapM (withIncrDepth . matchOn cgi t) (es <> ls)
-
-  where 
-    es = [(v,t,rtc_tc c) | (x, (t@(RApp c _ _ _), v)) <- M.toList γ] 
-    ls = [(v,t,rtc_tc c) | (s, t@(RApp c _ _ _)) <- M.toList lenv
-                         , Just v <- [symbolToVar s] -- JP: Is there better syntax for this?
-         ]
-    
-    symbolToVar :: Symbol -> Maybe Var
-    symbolToVar _ = Nothing -- TODO: Actually implement me!!! Dependent on abstract symbols? XXX
-        
-        -- -- Return first nonempty result.
-        -- -- JP: probably want to keep going up to some limit of N results.
-        -- monadicFirst :: (a -> m (Maybe b)) -> [a] -> m (Maybe b)
-        -- monadicFirst _f [] = 
-        --     return Nothing
-        -- monadicFirst f (m:ms) = do
-        --     mb <- f m
-        --     case mb of
-        --         r@(Just _) -> return r
-        --         Nothing -> monadicFirst f ms
-
-
-matchOn :: CGInfo -> SpecType -> (Var, SpecType, TyCon) -> SM [CoreExpr]
-matchOn cgi t (v, tx, c) = (GHC.Case (GHC.Var v) v (toType tx) <$$> sequence) <$> mapM (makeAlt cgi scrut t (v, tx)) (tyConDataCons c)
-  where scrut = v
-  -- JP: Does this need to be a foldM? Previous pattern matches could influence expressions of later patterns?
-
-
-
-makeAlt :: CGInfo -> Var -> SpecType -> (Var, SpecType) -> DataCon -> SM [GHC.CoreAlt]
-makeAlt cgi var t (x, tx@(RApp _ ts _ _)) c = locally $ do -- (AltCon, [b], Expr b)
-  ts <- liftCG $ mapM trueTy τs
-  xs <- mapM freshVar ts    
-  addsEnv $ zip xs ts 
-  addsEmem $ zip xs ts 
-  liftCG0 (\γ -> caseEnv γ x mempty (GHC.DataAlt c) xs Nothing)
-  es <- synthesizeBasic cgi t
-  return $ (\e -> (GHC.DataAlt c, xs, e)) <$> es
-  where 
-    (_, _, τs) = dataConInstSig c (toType <$> ts)
-makeAlt _ _ _ _ _ = error "makeAlt.bad argument"
-    
-
-
+-- -- Panagiotis TODO: here I only explore the first one                     
+-- --  We need the most recent one
+-- synthesizeMatch :: CGInfo -> LEnv -> SSEnv -> SpecType -> SM [CoreExpr]
+-- synthesizeMatch cgi lenv γ t 
+--   -- | [] <- es 
+--   -- = return def
+-- 
+--   -- | otherwise 
+--   -- = maybe def id <$> monadicFirst 
+--   = trace ("[synthesizeMatch] es = " ++ show es) $ 
+--       join <$> mapM (withIncrDepth . matchOn cgi t) (es <> ls)
+-- 
+--   where 
+--     es = [(v,t,rtc_tc c) | (x, (t@(RApp c _ _ _), v)) <- M.toList γ] 
+--     ls = [(v,t,rtc_tc c) | (s, t@(RApp c _ _ _)) <- M.toList lenv
+--                          , Just v <- [symbolToVar s] -- JP: Is there better syntax for this?
+--          ]
+--     
+--     symbolToVar :: Symbol -> Maybe Var
+--     symbolToVar _ = Nothing -- TODO: Actually implement me!!! Dependent on abstract symbols? XXX
+--         
+--         -- -- Return first nonempty result.
+--         -- -- JP: probably want to keep going up to some limit of N results.
+--         -- monadicFirst :: (a -> m (Maybe b)) -> [a] -> m (Maybe b)
+--         -- monadicFirst _f [] = 
+--         --     return Nothing
+--         -- monadicFirst f (m:ms) = do
+--         --     mb <- f m
+--         --     case mb of
+--         --         r@(Just _) -> return r
+--         --         Nothing -> monadicFirst f ms
+-- 
+-- 
+-- matchOn :: CGInfo -> SpecType -> (Var, SpecType, TyCon) -> SM [CoreExpr]
+-- matchOn cgi t (v, tx, c) = (GHC.Case (GHC.Var v) v (toType tx) <$$> sequence) <$> mapM (makeAlt cgi scrut t (v, tx)) (tyConDataCons c)
+--   where scrut = v
+--   -- JP: Does this need to be a foldM? Previous pattern matches could influence expressions of later patterns?
+-- 
+-- 
+-- 
+-- makeAlt :: CGInfo -> Var -> SpecType -> (Var, SpecType) -> DataCon -> SM [GHC.CoreAlt]
+-- makeAlt cgi var t (x, tx@(RApp _ ts _ _)) c = locally $ do -- (AltCon, [b], Expr b)
+--   ts <- liftCG $ mapM trueTy τs
+--   xs <- mapM freshVar ts    
+--   addsEnv $ zip xs ts 
+--   addsEmem $ zip xs ts 
+--   liftCG0 (\γ -> caseEnv γ x mempty (GHC.DataAlt c) xs Nothing)
+--   es <- synthesizeBasic cgi t
+--   return $ (\e -> (GHC.DataAlt c, xs, e)) <$> es
+--   where 
+--     (_, _, τs) = dataConInstSig c (toType <$> ts)
+-- makeAlt _ _ _ _ _ = error "makeAlt.bad argument"
+--     
+-- 
+-- 
