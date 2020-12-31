@@ -1010,9 +1010,8 @@ data TcWiredIn = TcWiredIn {
 -- | Run a computation in GHC's typechecking monad with wired in values locally bound in the typechecking environment.
 withWiredIn :: TcM a -> TcM a
 withWiredIn m = discardConstraints $ do
-  -- undef <- lookupUndef
   wiredIns <- mkWiredIns
-  -- snd <$> tcValBinds Ghc.NotTopLevel (binds undef wiredIns) (sigs wiredIns) m
+  -- JP: It might make sense to use `tcTopBinds` so that we don't clobber user symbols.
   snd <$> tcValBinds Ghc.NotTopLevel [] (sigs wiredIns) m
   
  where
@@ -1044,7 +1043,7 @@ withWiredIn m = discardConstraints $ do
 
   locSpan = UnhelpfulSpan "Language.Haskell.Liquid.GHC.Misc: WiredIn"
 
-  mkWiredIns = sequence [impl, dimpl, eq, len]
+  mkWiredIns = sequence [impl, dimpl, eq, neq, len]
 
   toName s = do
     u <- getUniqueM
@@ -1079,7 +1078,15 @@ withWiredIn m = discardConstraints $ do
     let ty = HsForAllTy NoExtField ForallInvis [Ghc.L locSpan $ UserTyVar NoExtField aName] $ Ghc.L locSpan $ HsFunTy NoExtField aTy (Ghc.L locSpan $ HsFunTy NoExtField aTy boolTy)
     return $ TcWiredIn n (Just (4, Ghc.InfixN)) ty
   
-  -- TODO: This is defined as a measure in liquid-base GHC.Base. We probably want to insert all measures to the environment.
+  -- infix 4 /= :: forall a . a -> a -> Bool
+  neq = do
+    n <- toName "/="
+    aName <- Ghc.L locSpan <$> toName "a"
+    let aTy = nameToTy aName
+    let ty = HsForAllTy NoExtField ForallInvis [Ghc.L locSpan $ UserTyVar NoExtField aName] $ Ghc.L locSpan $ HsFunTy NoExtField aTy (Ghc.L locSpan $ HsFunTy NoExtField aTy boolTy)
+    return $ TcWiredIn n (Just (4, Ghc.InfixN)) ty
+  
+  -- TODO: This is defined as a measure in liquid-base GHC.Base. We probably want to insert all measures in the environment.
   -- len :: forall a. [a] -> Int
   len = do
     n <- toName "len"
