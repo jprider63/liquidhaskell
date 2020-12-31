@@ -34,6 +34,7 @@ import qualified Language.Haskell.Liquid.Measure           as Ms
 import qualified Language.Haskell.Liquid.Bare.Types        as Bare 
 import qualified Language.Haskell.Liquid.Bare.Resolve      as Bare 
 
+import Debug.Trace
 
 ----------------------------------------------------------------------------------------------
 -- | Checking BareSpec ------------------------------------------------------------------------
@@ -440,12 +441,15 @@ checkMismatch (x, t) = if ok then emptyDiagnostics else mkDiagnostics mempty [er
     err              = errTypeMismatch x t'
     t'               = dropImplicits <$> t
 
-tyCompat :: Var -> RType RTyCon RTyVar r -> Bool
-tyCompat x t         = lqT == hsT
+-- tyCompat :: Var -> RType RTyCon RTyVar r -> Bool
+tyCompat :: Var -> SpecType -> Bool
+tyCompat x t         = traceShow (lqT == hsT) $ trace _msg $ lqT == hsT
   where
     lqT :: RSort     = toRSort t
     hsT :: RSort     = ofType (varType x)
-    _msg             = "TY-COMPAT: " ++ GM.showPpr x ++ ": hs = " ++ F.showpp hsT ++ " :lq = " ++ F.showpp lqT
+    _msg             = "TY-COMPAT: " ++ GM.showPpr x ++ ": hs = " ++ d1 ++ " :lq = " ++ d2
+    d1              = showpp $ varType x
+    d2              = showpp $ toType t
 
 errTypeMismatch     :: Var -> Located SpecType -> Error
 errTypeMismatch x t = ErrMismatch lqSp (pprint x) (text "Checked")  d1 d2 Nothing hsSp

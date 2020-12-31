@@ -544,7 +544,7 @@ instance NFData r => NFData (UReft r)
 
 newtype BTyVar = BTV Symbol deriving (Show, Generic, Data, Typeable)
 
-newtype RTyVar = RTV TyVar deriving (Generic, Data, Typeable)
+newtype RTyVar = RTV TyVar deriving (Show, Generic, Data, Typeable)
 
 instance Eq BTyVar where
   (BTV x) == (BTV y) = x == y
@@ -588,7 +588,7 @@ data RTyCon = RTyCon
   , rtc_pvars :: ![RPVar]      -- ^ Predicate Parameters
   , rtc_info  :: !TyConInfo    -- ^ TyConInfo
   }
-  deriving (Generic, Data, Typeable)
+  deriving (Generic, Data, Typeable, Show)
 
 instance F.Symbolic RTyCon where
   symbol = F.symbol . rtc_tc 
@@ -774,7 +774,7 @@ data RType c tv r
 
   | RHole r -- ^ let LH match against the Haskell type and add k-vars, e.g. `x:_`
             --   see tests/pos/Holes.hs
-  deriving (Eq, Generic, Data, Typeable, Functor)
+  deriving (Eq, Generic, Data, Typeable, Functor, Show)
   deriving Hashable via Generically (RType c tv r)
 
 instance (B.Binary c, B.Binary tv, B.Binary r) => B.Binary (RType c tv r)
@@ -863,7 +863,7 @@ instance (B.Binary s)              => B.Binary (RTVInfo s)
 data Ref τ t = RProp
   { rf_args :: [(Symbol, τ)]
   , rf_body :: t -- ^ Abstract refinement associated with `RTyCon`
-  } deriving (Eq, Generic, Data, Typeable, Functor)
+  } deriving (Eq, Generic, Data, Typeable, Functor, Show)
     deriving Hashable via Generically (Ref τ t)
 
 instance (B.Binary τ, B.Binary t) => B.Binary (Ref τ t)
@@ -1059,8 +1059,8 @@ instance F.PPrint BTyCon where
 instance F.PPrint v => F.PPrint (RTVar v s) where
   pprintTidy k (RTVar x _) = F.pprintTidy k x
 
-instance Show RTyCon where
-  show = F.showpp
+-- instance Show RTyCon where
+--   show = F.showpp
 
 instance Show BTyCon where
   show = F.showpp

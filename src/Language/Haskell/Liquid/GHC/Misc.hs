@@ -578,7 +578,7 @@ instance Show Name where
   show = symbolString . symbol
 
 instance Show Var where
-  show = show . getName
+  show = showPpr
 
 instance Show Class where
   show = show . getName

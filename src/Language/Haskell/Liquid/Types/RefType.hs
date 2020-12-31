@@ -590,7 +590,7 @@ nlzP ps t@(RRTy _ _ _ t')
 nlzP ps t@(RAllE _ _ _)
  = (t, ps)
 nlzP _ t
- = panic Nothing $ "RefType.nlzP: cannot handle " ++ show t
+ = panic Nothing $ "RefType.nlzP: cannot handle " ++ showpp t
 
 strengthenRefTypeGen, strengthenRefType ::
          (  OkRT c tv r
@@ -957,7 +957,7 @@ tyClasses (RApp c ts _ _)
 tyClasses (RVar _ _)      = []
 tyClasses (RRTy _ _ _ t)  = tyClasses t
 tyClasses (RHole _)       = []
-tyClasses t               = panic Nothing ("RefType.tyClasses cannot handle" ++ show t)
+tyClasses t               = panic Nothing ("RefType.tyClasses cannot handle" ++ showpp t)
 
 
 --------------------------------------------------------------------------------
@@ -1499,7 +1499,7 @@ toType (RAppTy t (RExprArg _) _)
 toType (RAppTy t t' _)
   = AppTy (toType t) (toType t')
 toType t@(RExprArg _)
-  = impossible Nothing $ "CANNOT HAPPEN: RefType.toType called with: " ++ show t
+  = impossible Nothing $ "CANNOT HAPPEN: RefType.toType called with: " ++ showpp t
 toType (RRTy _ _ _ t)
   = toType t
 toType (RHole _)
@@ -1891,8 +1891,8 @@ dataConsOfTyCon = dcs S.empty
 -- | Printing Refinement Types -------------------------------------------------
 --------------------------------------------------------------------------------
 
-instance Show RTyVar where
-  show = showpp
+-- instance Show RTyVar where
+--   show = showpp
 
 instance PPrint (UReft r) => Show (UReft r) where
   show = showpp
@@ -1929,8 +1929,8 @@ ppMbSizeFun (Just z) = F.pprint z
 -- ppHack :: (?callStack :: CallStack) => a -> b
 -- ppHack _ = errorstar "OOPS"
 
-instance PPrint (RType c tv r) => Show (RType c tv r) where
-  show = showpp
+-- instance PPrint (RType c tv r) => Show (RType c tv r) where
+--   show = showpp
 
 instance PPrint (RTProp c tv r) => Show (RTProp c tv r) where
   show = showpp
